@@ -23,6 +23,19 @@ This creates:
 open build/AIMarkdownViewer.app
 ```
 
+## Install To Applications
+
+Build and replace the app in `/Applications`:
+
+```bash
+./scripts/install_app.sh
+```
+
+Options:
+
+- `--skip-build` to install the existing build without rebuilding
+- `--target <dir>` to install to a different Applications folder (example: `~/Applications`)
+
 ## Open Markdown From Finder
 
 1. In Finder, right-click a `.md` file.
@@ -36,4 +49,5 @@ The app also supports drag-and-drop of files onto the window.
 - Centered reading column for cleaner scanning
 - Serif text style for long-form Markdown readability
 - Font size slider and line spacing slider in the top-right
-- Block-aware Markdown formatting for headers, ordered/unordered lists, and fenced code blocks
+- Block-aware Markdown formatting for headers, lists, fenced code blocks, and clean pipe-table rendering
+- Wide content (like tables) keeps line integrity and can scroll horizontally without wrapping
