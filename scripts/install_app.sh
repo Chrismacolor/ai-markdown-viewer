@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
-APP_NAME="AIMarkdownViewer"
+APP_NAME="Margins"
 SOURCE_APP="$ROOT_DIR/build/$APP_NAME.app"
 TARGET_DIR="/Applications"
 SKIP_BUILD=0

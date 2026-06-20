@@ -71,7 +71,7 @@ extension Color {
 final class FileWatcher {
     private let url: URL
     private let onChange: () -> Void
-    private let queue = DispatchQueue(label: "com.disanto.aimarkdownviewer.filewatcher")
+    private let queue = DispatchQueue(label: "com.disanto.margins.filewatcher")
     private var source: DispatchSourceFileSystemObject?
     private var fileDescriptor: CInt = -1
     private var pendingNotify: DispatchWorkItem?
@@ -847,7 +847,7 @@ struct ContentView: View {
 }
 
 @main
-struct AIMarkdownViewerApp: App {
+struct MarginsApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = ViewerModel()
 

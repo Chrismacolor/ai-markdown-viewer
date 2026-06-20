@@ -1,7 +1,7 @@
 import Foundation
 
 // Standalone test + benchmark runner for the Markdown parser. Compiled with
-// Sources/AIMarkdownViewer/MarkdownRenderer.swift by scripts/test.sh (no SwiftPM,
+// Sources/Margins/MarkdownRenderer.swift by scripts/test.sh (no SwiftPM,
 // no SwiftUI). Exits non-zero on any failure.
 
 private func plain(_ a: AttributedString) -> String { String(a.characters) }

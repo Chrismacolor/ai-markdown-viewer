@@ -4,12 +4,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
-APP_NAME="AIMarkdownViewer"
+APP_NAME="Margins"
 BUILD_DIR="$ROOT_DIR/build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"
 BIN_DIR="$APP_DIR/Contents/MacOS"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
-SOURCE_DIR="$ROOT_DIR/Sources/AIMarkdownViewer"
+SOURCE_DIR="$ROOT_DIR/Sources/Margins"
 INFO_PLIST="$ROOT_DIR/Resources/Info.plist"
 ICON_FILE="$ROOT_DIR/Resources/AppIcon.icns"
 

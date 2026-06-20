@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build, sign, notarize, and package AIMarkdownViewer for direct distribution.
+# Build, sign, notarize, and package Margins for direct distribution.
 #
 # Produces a Gatekeeper-clean, stapled .dmg in dist/ plus its sha256 (for the
 # Homebrew cask). Requires an Apple Developer ID Application certificate in the
@@ -24,10 +24,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
-APP_NAME="AIMarkdownViewer"
+APP_NAME="Margins"
 APP_DIR="$ROOT_DIR/build/$APP_NAME.app"
 DIST_DIR="$ROOT_DIR/dist"
-ENTITLEMENTS="$ROOT_DIR/Resources/AIMarkdownViewer.entitlements"
+ENTITLEMENTS="$ROOT_DIR/Resources/Margins.entitlements"
 
 VERSION="${VERSION:-$(git -C "$ROOT_DIR" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)}"
 VERSION="${VERSION:-0.0.0}"

@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
-RENDERER="$ROOT_DIR/Sources/AIMarkdownViewer/MarkdownRenderer.swift"
+RENDERER="$ROOT_DIR/Sources/Margins/MarkdownRenderer.swift"
 TESTS="$ROOT_DIR/Tests/MarkdownRendererTests.swift"
 
 TMP_DIR="$(mktemp -d)"
