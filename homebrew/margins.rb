@@ -14,10 +14,10 @@ cask "margins" do
   version "1.0.0"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
 
-  url "https://github.com/Chrismacolor/ai-markdown-viewer/releases/download/v#{version}/Margins-#{version}.dmg"
+  url "https://github.com/Chrismacolor/margins/releases/download/v#{version}/Margins-#{version}.dmg"
   name "Margins"
   desc "Native Markdown reader for macOS"
-  homepage "https://github.com/Chrismacolor/ai-markdown-viewer"
+  homepage "https://github.com/Chrismacolor/margins"
 
   depends_on macos: ">= :ventura"
 

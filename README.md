@@ -29,7 +29,7 @@ Update with `brew upgrade`.
 ### Direct download
 
 Grab the signed, notarized `.dmg` from the
-[Releases](https://github.com/Chrismacolor/ai-markdown-viewer/releases) page and
+[Releases](https://github.com/Chrismacolor/margins/releases) page and
 drag **Margins** to `/Applications`.
 
 ## Open Markdown
