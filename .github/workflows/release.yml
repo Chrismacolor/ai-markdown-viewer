@@ -1,0 +1,56 @@
+name: Release
+
+# Builds, signs, notarizes, and publishes a DMG when a v* tag is pushed.
+#
+# Required repository secrets:
+#   DEVELOPER_ID_P12_BASE64    base64 of your Developer ID Application .p12
+#   DEVELOPER_ID_P12_PASSWORD  password for that .p12
+#   KEYCHAIN_PASSWORD          any throwaway password for the temp keychain
+#   DEVELOPER_ID               "Developer ID Application: NAME (TEAMID)"
+#   NOTARY_API_KEY_P8          contents of the App Store Connect API .p8 key
+#   NOTARY_KEY_ID              API key ID
+#   NOTARY_ISSUER              API issuer UUID
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run tests
+        run: ./scripts/test.sh
+
+      - name: Import Developer ID certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+      - name: Build, sign, notarize, package
+        env:
+          DEVELOPER_ID: ${{ secrets.DEVELOPER_ID }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          echo "${{ secrets.NOTARY_API_KEY_P8 }}" > "$RUNNER_TEMP/notary.p8"
+          NOTARY_KEY="$RUNNER_TEMP/notary.p8" ./scripts/release.sh
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/*.dmg --generate-notes

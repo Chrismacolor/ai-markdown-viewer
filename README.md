@@ -1,53 +1,86 @@
 # AI Markdown Viewer (macOS)
 
-Lightweight native Markdown viewer for macOS (SwiftUI, no third-party dependencies).
+A lightweight, native macOS Markdown viewer built with SwiftUI. No bells and
+whistles — it opens Markdown fast, renders it cleanly, and stays out of the way.
+Zero third-party dependencies; the whole app compiles against the system SDK.
 
-## Requirements
+- **Native & light** — no Electron, no embedded browser. Tiny app, low memory.
+- **Fast** — Markdown is parsed once and rendered with SwiftUI; large files parse
+  off the main thread so the UI never freezes.
+- **Dark / light** — follows the macOS appearance with a manual override.
+- **Live reload** — edits on disk update the preview instantly (toggle in the header).
 
-- macOS 13+
-- Xcode command line tools (`xcode-select --install`)
+## Install
 
-## Build
-
-```bash
-./scripts/build_app.sh
-```
-
-This creates:
-
-- `build/AIMarkdownViewer.app`
-
-## Run
+### Homebrew (recommended)
 
 ```bash
-open build/AIMarkdownViewer.app
+brew tap Chrismacolor/tap
+brew install --cask ai-markdown-viewer
 ```
 
-## Install To Applications
+Update with `brew upgrade`.
 
-Build and replace the app in `/Applications`:
+### Direct download
+
+Grab the signed, notarized `.dmg` from the
+[Releases](https://github.com/Chrismacolor/ai-markdown-viewer/releases) page and
+drag the app to `/Applications`.
+
+## Open Markdown
+
+- Right-click a `.md` file in Finder → **Open With → AIMarkdownViewer**
+  (or **Get Info → Open with → Change All…** to make it the default).
+- Or drag a file onto the window.
+
+Supported extensions: `.md`, `.markdown`, `.mdown`.
+
+## Build from source
+
+Requirements: macOS 13+ and the Xcode command line tools
+(`xcode-select --install`).
 
 ```bash
-./scripts/install_app.sh
+./scripts/build_app.sh      # build/AIMarkdownViewer.app (optimized)
+./scripts/install_app.sh    # build + copy to /Applications (uses sudo)
+./scripts/test.sh           # run parser tests + parse benchmark
+./scripts/release.sh        # sign + notarize + package a DMG (needs Developer ID)
 ```
 
-Options:
+`build_app.sh` honors `SWIFT_OPT=-Onone` for faster debug builds and stamps the
+version from the latest git tag.
 
-- `--skip-build` to install the existing build without rebuilding
-- `--target <dir>` to install to a different Applications folder (example: `~/Applications`)
+## Performance
 
-## Open Markdown From Finder
+Parser benchmark (`scripts/test.sh`, Apple Silicon, release build):
 
-1. In Finder, right-click a `.md` file.
-2. Click `Open With` and choose `AIMarkdownViewer`.
-3. Optional: use `Get Info` -> `Open with` -> `Change All...` to make it default for Markdown files.
+| Document size | Parse time |
+|:--------------|-----------:|
+| 100 KB        | ~50 ms     |
+| 1 MB          | ~0.4 s     |
+| 10 MB         | ~3.9 s     |
 
-The app also supports drag-and-drop of files onto the window.
+Typical documents (well under 100 KB) parse synchronously in a few milliseconds.
+Anything larger parses on a background task, so the window stays responsive while
+it loads. Files are capped at 20 MB (truncated with a notice) to keep memory
+bounded.
 
-## Reader Style
+## Architecture
 
-- Centered reading column for cleaner scanning
-- Serif text style for long-form Markdown readability
-- Font size slider and line spacing slider in the top-right
-- Block-aware Markdown formatting for headers, lists, fenced code blocks, and clean pipe-table rendering
-- Wide content (like tables) keeps line integrity and can scroll horizontally without wrapping
+The app is two Swift files compiled into one binary:
+
+- `Sources/AIMarkdownViewer/MarkdownRenderer.swift` — a SwiftUI-free Markdown
+  parser that produces theme-independent blocks (so it can be unit-tested
+  standalone, and a theme switch never re-parses).
+- `Sources/AIMarkdownViewer/main.swift` — the SwiftUI app, theme, and views that
+  apply colors/fonts at render time.
+
+Tests live in `Tests/` and run via `swiftc` (no Swift Package Manager).
+
+## Distribution / CI
+
+- `.github/workflows/ci.yml` builds and runs tests on every push/PR.
+- `.github/workflows/release.yml` signs, notarizes, and publishes a DMG when a
+  `v*` tag is pushed (see the file for the required secrets).
+- `homebrew/ai-markdown-viewer.rb` is the cask; copy it into the tap repo and
+  bump `version` + `sha256` (printed by `release.sh`) for each release.

@@ -143,21 +143,86 @@ final class FileWatcher {
 @MainActor
 final class ViewerModel: ObservableObject {
     @Published var fileURL: URL?
-    @Published var markdownSource = ""
+    @Published var markdownSource = "" {
+        didSet { reparse() }
+    }
+    /// Theme-independent parsed blocks. Colors/fonts are applied later in the
+    /// views, so a theme switch never triggers a re-parse.
+    @Published var blocks: [RenderedBlock] = []
+    /// Non-blocking banner message (large/truncated file, file removed, etc.).
+    @Published var notice: String?
 
     private var watcher: FileWatcher?
     private var liveReloadEnabled = true
+    private var parseGeneration = 0
+
+    /// Hard cap on how much of a file we load, to keep memory bounded. Files
+    /// above this are truncated with a notice — protecting the "low resource"
+    /// promise against pathologically large inputs.
+    private static let maxBytes = 20_000_000
+
+    /// Re-parse markdown into theme-independent blocks. Small documents parse
+    /// synchronously (instant); large ones parse on a background task so the UI
+    /// never blocks. Stale async results are discarded via a generation token.
+    private func reparse() {
+        parseGeneration += 1
+        let gen = parseGeneration
+        let src = markdownSource
+        if src.utf8.count < 100_000 {
+            blocks = MarkdownRenderer.parse(src)
+            return
+        }
+        Task.detached(priority: .userInitiated) {
+            let parsed = MarkdownRenderer.parse(src)
+            await MainActor.run { [weak self] in
+                guard let self, gen == self.parseGeneration else { return }
+                self.blocks = parsed
+            }
+        }
+    }
 
     func openFile(_ url: URL) {
         do {
-            markdownSource = try String(contentsOf: url, encoding: .utf8)
+            let (text, banner) = try loadContents(of: url)
+            notice = banner
+            markdownSource = text
             fileURL = url
             if liveReloadEnabled { startWatching(url) }
         } catch {
+            notice = nil
             markdownSource = "Could not open \(url.lastPathComponent).\n\n\(error.localizedDescription)"
             fileURL = nil
             watcher = nil
         }
+    }
+
+    /// Reads a file with a size guard and an encoding fallback chain. Returns the
+    /// text plus an optional banner (e.g. when the file was truncated).
+    private func loadContents(of url: URL) throws -> (String, String?) {
+        let size = (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        if size > Self.maxBytes {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            let data = handle.readData(ofLength: Self.maxBytes)
+            let mb = size / 1_000_000
+            return (decodeText(data),
+                    "Large file (\(mb) MB) — showing the first \(Self.maxBytes / 1_000_000) MB for performance.")
+        }
+        return (decodeText(try Data(contentsOf: url)), nil)
+    }
+
+    /// Decodes bytes as UTF-8, then (only if a UTF-16 BOM is present) UTF-16,
+    /// then the common single-byte encodings. UTF-16 is gated on a BOM because
+    /// it "succeeds" on arbitrary byte pairs and would otherwise yield mojibake.
+    private func decodeText(_ data: Data) -> String {
+        if let s = String(data: data, encoding: .utf8) { return s }
+        if data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF]),
+           let s = String(data: data, encoding: .utf16) {
+            return s
+        }
+        if let s = String(data: data, encoding: .windowsCP1252) { return s }
+        if let s = String(data: data, encoding: .isoLatin1) { return s }
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// Turns live reload on or off, tearing down or rebuilding the watcher for
@@ -180,11 +245,20 @@ final class ViewerModel: ObservableObject {
     }
 
     /// Re-reads the open file after a live change; no-op if the content matches.
+    /// Surfaces a banner (instead of silently showing stale content) when the
+    /// file has been deleted or can no longer be read.
     func reloadFromDisk() {
         guard let url = fileURL else { return }
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
-        if text != markdownSource {
-            markdownSource = text
+        if !FileManager.default.fileExists(atPath: url.path) {
+            notice = "\(url.lastPathComponent) is no longer available on disk."
+            return
+        }
+        do {
+            let (text, banner) = try loadContents(of: url)
+            notice = banner
+            if text != markdownSource { markdownSource = text }
+        } catch {
+            notice = "Can’t read \(url.lastPathComponent) — it may have moved or its permissions changed."
         }
     }
 
@@ -212,44 +286,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - Renderer
+// MARK: - Renderer styling
+//
+// The Markdown model and parser live in MarkdownRenderer.swift (SwiftUI-free so
+// it can be unit-tested standalone). The view-facing color mapping lives here.
 
-enum HAlign {
-    case left
-    case center
-    case right
-}
-
-enum CalloutKind {
-    case note
-    case tip
-    case important
-    case warning
-    case caution
-    case plain
-
-    init(tag: String) {
-        switch tag.uppercased() {
-        case "NOTE": self = .note
-        case "TIP", "HINT": self = .tip
-        case "IMPORTANT": self = .important
-        case "WARNING": self = .warning
-        case "CAUTION", "DANGER": self = .caution
-        default: self = .plain
-        }
-    }
-
-    var title: String? {
-        switch self {
-        case .note: return "Note"
-        case .tip: return "Tip"
-        case .important: return "Important"
-        case .warning: return "Warning"
-        case .caution: return "Caution"
-        case .plain: return nil
-        }
-    }
-
+/// Maps callout kinds to theme colors.
+extension CalloutKind {
     func color(_ theme: Theme) -> Color {
         switch self {
         case .note: return theme.accent
@@ -260,28 +303,6 @@ enum CalloutKind {
         case .plain: return theme.textMuted
         }
     }
-}
-
-struct ListRow: Identifiable {
-    let id = UUID()
-    let indent: Int
-    let marker: String
-    let content: AttributedString
-}
-
-enum MarkdownBlock {
-    case heading(level: Int, text: AttributedString)
-    case paragraph(AttributedString)
-    case list([ListRow])
-    case code(language: String, rawLines: [String], display: AttributedString)
-    case table(header: [AttributedString], rows: [[AttributedString]], alignments: [HAlign])
-    case callout(kind: CalloutKind, title: AttributedString?, content: AttributedString)
-    case rule
-}
-
-struct RenderedBlock: Identifiable {
-    let id: Int
-    let block: MarkdownBlock
 }
 
 /// Font sizes ported from md-viewer-py's `05-content.css`.
@@ -297,368 +318,16 @@ private enum FontSize {
     static let codeBlock: Double = 12.5
     static let tableHeader: Double = 11
     static let tableCell: Double = 13.5
-}
 
-struct MarkdownRenderer {
-    static func render(markdown: String, theme: Theme) -> [RenderedBlock] {
-        let normalized = markdown
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-        let lines = normalized.components(separatedBy: "\n")
-
-        var index = 0
-        var blocks: [MarkdownBlock] = []
-
-        while index < lines.count {
-            while index < lines.count, lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
-                index += 1
-            }
-            if index >= lines.count { break }
-
-            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
-
-            if trimmed.hasPrefix("```") {
-                let (block, next) = parseCodeBlock(from: lines, start: index, theme: theme)
-                blocks.append(block)
-                index = next
-                continue
-            }
-
-            if let (level, text) = parseHeader(trimmed) {
-                blocks.append(.heading(level: level, text: styledHeading(text, level: level, theme: theme)))
-                index += 1
-                continue
-            }
-
-            if isHorizontalRule(trimmed) {
-                blocks.append(.rule)
-                index += 1
-                continue
-            }
-
-            if trimmed.hasPrefix(">") {
-                let (block, next) = parseBlockquote(from: lines, start: index, theme: theme)
-                blocks.append(block)
-                index = next
-                continue
-            }
-
-            if let (block, next) = parseTableBlock(from: lines, start: index, theme: theme) {
-                blocks.append(block)
-                index = next
-                continue
-            }
-
-            if parseListItem(lines[index]) != nil {
-                let (block, next) = parseListBlock(from: lines, start: index, theme: theme)
-                blocks.append(block)
-                index = next
-                continue
-            }
-
-            let (block, next) = parseParagraph(from: lines, start: index, theme: theme)
-            blocks.append(block)
-            index = next
-        }
-
-        return blocks.enumerated().map { RenderedBlock(id: $0.offset, block: $0.element) }
-    }
-
-    // MARK: Headers
-
-    private static func parseHeader(_ line: String) -> (level: Int, text: String)? {
-        let level = line.prefix { $0 == "#" }.count
-        guard (1...6).contains(level) else { return nil }
-        let remainder = line.dropFirst(level)
-        guard remainder.first == " " else { return nil }
-        return (level, String(remainder.trimmingCharacters(in: .whitespaces)))
-    }
-
-    private static func headerSize(for level: Int) -> Double {
+    static func heading(_ level: Int) -> Double {
         switch level {
-        case 1: return FontSize.h1
-        case 2: return FontSize.h2
-        case 3: return FontSize.h3
-        case 4: return FontSize.h4
-        case 5: return FontSize.h5
-        default: return FontSize.h6
+        case 1: return h1
+        case 2: return h2
+        case 3: return h3
+        case 4: return h4
+        case 5: return h5
+        default: return h6
         }
-    }
-
-    private static func styledHeading(_ text: String, level: Int, theme: Theme) -> AttributedString {
-        // h4 renders in the accent color per the reference CSS; the rest use the heading color.
-        let weight: Font.Weight = level == 1 ? .heavy : (level == 2 ? .bold : .semibold)
-        let color = level >= 4 ? theme.accent : theme.textHeading
-        var heading = styledInline(text, size: headerSize(for: level), weight: weight, theme: theme, baseColor: color)
-        heading.foregroundColor = color
-        return heading
-    }
-
-    // MARK: Horizontal rule
-
-    private static func isHorizontalRule(_ trimmed: String) -> Bool {
-        guard !trimmed.contains("|") else { return false }
-        return trimmed.range(of: #"^(-{3,}|\*{3,}|_{3,})$"#, options: .regularExpression) != nil
-    }
-
-    // MARK: Code blocks
-
-    private static func parseCodeBlock(from lines: [String], start: Int, theme: Theme) -> (MarkdownBlock, Int) {
-        var index = start
-        let openingFence = lines[index].trimmingCharacters(in: .whitespaces)
-        let language = String(openingFence.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-        index += 1
-
-        var codeLines: [String] = []
-        while index < lines.count {
-            if lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                index += 1
-                break
-            }
-            codeLines.append(lines[index])
-            index += 1
-        }
-
-        var display = AttributedString(codeLines.joined(separator: "\n"))
-        display.font = .system(size: FontSize.codeBlock, weight: .regular, design: .monospaced)
-        display.foregroundColor = theme.text
-
-        return (.code(language: language, rawLines: codeLines, display: display), index)
-    }
-
-    // MARK: Blockquotes / callouts
-
-    private static func parseBlockquote(from lines: [String], start: Int, theme: Theme) -> (MarkdownBlock, Int) {
-        var index = start
-        var contentLines: [String] = []
-
-        while index < lines.count {
-            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix(">") else { break }
-            var stripped = String(trimmed.dropFirst())
-            if stripped.hasPrefix(" ") { stripped.removeFirst() }
-            contentLines.append(stripped)
-            index += 1
-        }
-
-        var kind = CalloutKind.plain
-        if
-            let first = contentLines.first,
-            let match = first.range(of: #"^\[!\w+\]"#, options: .regularExpression)
-        {
-            let tag = String(first[match]).dropFirst(2).dropLast()
-            kind = CalloutKind(tag: String(tag))
-            // Drop the marker line; remaining lines form the body.
-            let remainder = String(first[match.upperBound...]).trimmingCharacters(in: .whitespaces)
-            contentLines.removeFirst()
-            if !remainder.isEmpty { contentLines.insert(remainder, at: 0) }
-        }
-
-        let bodyText = contentLines
-            .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let content = styledInline(bodyText, size: FontSize.body, theme: theme, baseColor: theme.text)
-
-        var title: AttributedString?
-        if let titleString = kind.title {
-            var attributed = AttributedString(titleString)
-            attributed.font = .system(size: 13, weight: .semibold)
-            attributed.foregroundColor = kind.color(theme)
-            title = attributed
-        }
-
-        return (.callout(kind: kind, title: title, content: content), index)
-    }
-
-    // MARK: Tables
-
-    private static func parseTableBlock(from lines: [String], start: Int, theme: Theme) -> (MarkdownBlock, Int)? {
-        guard start + 1 < lines.count else { return nil }
-        guard
-            let headerCells = splitTableRow(lines[start]),
-            let alignments = parseTableSeparatorRow(lines[start + 1])
-        else {
-            return nil
-        }
-
-        let columnCount = max(headerCells.count, alignments.count)
-        guard columnCount > 0 else { return nil }
-
-        var resolvedAlignments = alignments
-        if resolvedAlignments.count < columnCount {
-            resolvedAlignments.append(contentsOf: Array(repeating: .left, count: columnCount - resolvedAlignments.count))
-        }
-
-        let header = normalizeCells(headerCells, toCount: columnCount).map {
-            styledTableCell($0.uppercased(), size: FontSize.tableHeader, weight: .semibold, theme: theme, color: theme.textMuted)
-        }
-
-        var rows: [[AttributedString]] = []
-        var index = start + 2
-        while index < lines.count {
-            if lines[index].trimmingCharacters(in: .whitespaces).isEmpty { break }
-            guard let row = splitTableRow(lines[index]) else { break }
-            let cells = normalizeCells(row, toCount: columnCount).map {
-                styledTableCell($0, size: FontSize.tableCell, weight: .regular, theme: theme, color: theme.text)
-            }
-            rows.append(cells)
-            index += 1
-        }
-
-        return (.table(header: header, rows: rows, alignments: resolvedAlignments), index)
-    }
-
-    private static func styledTableCell(_ text: String, size: Double, weight: Font.Weight, theme: Theme, color: Color) -> AttributedString {
-        var cell = styledInline(text, size: size, weight: weight, theme: theme, baseColor: color)
-        cell.foregroundColor = color
-        return cell
-    }
-
-    private static func splitTableRow(_ line: String) -> [String]? {
-        var trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard trimmed.contains("|") else { return nil }
-        if trimmed.hasPrefix("|") { trimmed.removeFirst() }
-        if trimmed.hasSuffix("|") { trimmed.removeLast() }
-        return trimmed
-            .split(separator: "|", omittingEmptySubsequences: false)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-    }
-
-    private static func parseTableSeparatorRow(_ line: String) -> [HAlign]? {
-        guard let cells = splitTableRow(line), !cells.isEmpty else { return nil }
-        var alignments: [HAlign] = []
-        for cell in cells {
-            let trimmed = cell.trimmingCharacters(in: .whitespaces)
-            guard trimmed.range(of: #"^:?-{3,}:?$"#, options: .regularExpression) != nil else { return nil }
-            let left = trimmed.hasPrefix(":")
-            let right = trimmed.hasSuffix(":")
-            if left && right {
-                alignments.append(.center)
-            } else if right {
-                alignments.append(.right)
-            } else {
-                alignments.append(.left)
-            }
-        }
-        return alignments
-    }
-
-    private static func normalizeCells(_ cells: [String], toCount count: Int) -> [String] {
-        var normalized = Array(cells.prefix(count))
-        if normalized.count < count {
-            normalized.append(contentsOf: Array(repeating: "", count: count - normalized.count))
-        }
-        return normalized
-    }
-
-    // MARK: Lists
-
-    private enum ListItem {
-        case unordered(indent: Int, text: String)
-        case ordered(indent: Int, number: String, text: String)
-    }
-
-    private static func parseListBlock(from lines: [String], start: Int, theme: Theme) -> (MarkdownBlock, Int) {
-        var index = start
-        var rows: [ListRow] = []
-
-        while index < lines.count {
-            guard let item = parseListItem(lines[index]) else { break }
-            switch item {
-            case let .unordered(indent, text):
-                rows.append(ListRow(indent: indent, marker: "•", content: styledInline(text, size: FontSize.body, theme: theme, baseColor: theme.text)))
-            case let .ordered(indent, number, text):
-                rows.append(ListRow(indent: indent, marker: "\(number).", content: styledInline(text, size: FontSize.body, theme: theme, baseColor: theme.text)))
-            }
-            index += 1
-        }
-
-        return (.list(rows), index)
-    }
-
-    private static func parseListItem(_ line: String) -> ListItem? {
-        let indentWidth = line.prefix { $0 == " " || $0 == "\t" }.reduce(0) { $0 + ($1 == "\t" ? 2 : 1) }
-        let indent = max(0, indentWidth / 2)
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-        if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("+ ") {
-            let text = String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-            return .unordered(indent: indent, text: text)
-        }
-
-        guard let range = trimmed.range(of: #"^\d+\.\s+"#, options: .regularExpression) else { return nil }
-        let prefix = String(trimmed[range]).trimmingCharacters(in: .whitespaces)
-        let number = prefix.split(separator: ".").first.map(String.init) ?? "1"
-        let text = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespaces)
-        return .ordered(indent: indent, number: number, text: text)
-    }
-
-    // MARK: Paragraphs
-
-    private static func parseParagraph(from lines: [String], start: Int, theme: Theme) -> (MarkdownBlock, Int) {
-        var index = start
-        var parts: [String] = []
-
-        while index < lines.count {
-            let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            if
-                trimmed.isEmpty ||
-                trimmed.hasPrefix("```") ||
-                trimmed.hasPrefix(">") ||
-                parseHeader(trimmed) != nil ||
-                isHorizontalRule(trimmed) ||
-                parseListItem(line) != nil ||
-                parseTableBlock(from: lines, start: index, theme: theme) != nil
-            {
-                break
-            }
-
-            parts.append(trimmed)
-            index += 1
-        }
-
-        let text = parts.joined(separator: " ")
-        return (.paragraph(styledInline(text, size: FontSize.body, theme: theme, baseColor: theme.text)), index)
-    }
-
-    // MARK: Inline styling
-
-    private static func styledInline(
-        _ text: String,
-        size: Double,
-        weight: Font.Weight = .regular,
-        theme: Theme,
-        baseColor: Color
-    ) -> AttributedString {
-        var options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        options.failurePolicy = .returnPartiallyParsedIfPossible
-
-        var inline = (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
-        inline.font = .system(size: size, weight: weight)
-        inline.foregroundColor = baseColor
-
-        for run in inline.runs {
-            // Links render in the accent color (the reference uses `color: var(--accent)`).
-            if run.link != nil {
-                inline[run.range].foregroundColor = theme.accent
-            }
-
-            guard let intent = run.inlinePresentationIntent else { continue }
-
-            if intent.contains(.code) {
-                inline[run.range].font = .system(size: FontSize.inlineCode, weight: .regular, design: .monospaced)
-                inline[run.range].foregroundColor = theme.cyan
-                inline[run.range].backgroundColor = theme.card
-            } else if intent.contains(.stronglyEmphasized) {
-                inline[run.range].font = .system(size: size, weight: .bold)
-            } else if intent.contains(.emphasized) {
-                inline[run.range].font = .system(size: size, weight: weight).italic()
-            }
-        }
-
-        return inline
     }
 }
 
@@ -667,6 +336,38 @@ struct MarkdownRenderer {
 private func readingLineSpacing(for size: Double) -> Double {
     // Approximates the reference's `line-height: 1.65` on top of the default leading.
     max(3, size * 0.45)
+}
+
+/// Applies theme colors and fonts to parsed (theme-independent) inline text.
+/// Cheap — runs at view time, so a theme switch restyles without re-parsing.
+private func styledInline(
+    _ raw: AttributedString,
+    size: Double,
+    weight: Font.Weight = .regular,
+    baseColor: Color,
+    theme: Theme
+) -> AttributedString {
+    var inline = raw
+    inline.font = .system(size: size, weight: weight)
+    inline.foregroundColor = baseColor
+
+    for run in inline.runs {
+        // Links render in the accent color (the reference uses `color: var(--accent)`).
+        if run.link != nil {
+            inline[run.range].foregroundColor = theme.accent
+        }
+        guard let intent = run.inlinePresentationIntent else { continue }
+        if intent.contains(.code) {
+            inline[run.range].font = .system(size: FontSize.inlineCode, weight: .regular, design: .monospaced)
+            inline[run.range].foregroundColor = theme.cyan
+            inline[run.range].backgroundColor = theme.card
+        } else if intent.contains(.stronglyEmphasized) {
+            inline[run.range].font = .system(size: size, weight: .bold)
+        } else if intent.contains(.emphasized) {
+            inline[run.range].font = .system(size: size, weight: weight).italic()
+        }
+    }
+    return inline
 }
 
 private struct DashedRule: View {
@@ -688,12 +389,12 @@ private struct DashedRule: View {
 
 private struct HeadingView: View {
     let level: Int
-    let text: AttributedString
+    let inline: AttributedString
     let theme: Theme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(text)
+            Text(styled)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             if level == 1 {
@@ -703,6 +404,13 @@ private struct HeadingView: View {
             }
         }
         .padding(.top, topPadding)
+    }
+
+    private var styled: AttributedString {
+        // h4+ render in the accent color per the reference CSS; rest use heading color.
+        let weight: Font.Weight = level == 1 ? .heavy : (level == 2 ? .bold : .semibold)
+        let color = level >= 4 ? theme.accent : theme.textHeading
+        return styledInline(inline, size: FontSize.heading(level), weight: weight, baseColor: color, theme: theme)
     }
 
     private var topPadding: CGFloat {
@@ -716,7 +424,7 @@ private struct HeadingView: View {
 }
 
 private struct ListView: View {
-    let rows: [ListRow]
+    let rows: [ListItem]
     let theme: Theme
 
     var body: some View {
@@ -727,7 +435,7 @@ private struct ListView: View {
                         .font(.system(size: FontSize.body))
                         .foregroundStyle(theme.textMuted)
                         .frame(minWidth: 14, alignment: .trailing)
-                    Text(row.content)
+                    Text(styledInline(row.inline, size: FontSize.body, baseColor: theme.text, theme: theme))
                         .lineSpacing(readingLineSpacing(for: FontSize.body))
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
@@ -740,8 +448,7 @@ private struct ListView: View {
 
 private struct CalloutView: View {
     let kind: CalloutKind
-    let title: AttributedString?
-    let content: AttributedString
+    let inline: AttributedString
     let theme: Theme
 
     var body: some View {
@@ -750,12 +457,12 @@ private struct CalloutView: View {
                 .fill(kind.color(theme))
                 .frame(width: 3)
             VStack(alignment: .leading, spacing: 4) {
-                if let title {
+                if let title = kind.title {
                     Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(kind.color(theme))
                 }
-                Text(content)
-                    .font(.system(size: FontSize.body))
-                    .foregroundStyle(theme.text)
+                Text(styledInline(inline, size: FontSize.body, baseColor: theme.text, theme: theme))
                     .lineSpacing(readingLineSpacing(for: FontSize.body))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -781,7 +488,7 @@ private struct MarkdownTableView: View {
         Grid(horizontalSpacing: 0, verticalSpacing: 0) {
             GridRow {
                 ForEach(Array(header.enumerated()), id: \.offset) { index, cell in
-                    cellView(cell, column: index)
+                    cellView(cell, column: index, isHeader: true)
                         .background(theme.card)
                 }
             }
@@ -789,7 +496,8 @@ private struct MarkdownTableView: View {
             ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
                 GridRow {
                     ForEach(0..<columnCount, id: \.self) { column in
-                        cellView(column < row.count ? row[column] : AttributedString(""), column: column)
+                        cellView(column < row.count ? row[column] : AttributedString(""),
+                                 column: column, isHeader: false)
                     }
                 }
                 if rowIndex < rows.count - 1 {
@@ -811,8 +519,11 @@ private struct MarkdownTableView: View {
             .gridCellColumns(max(1, columnCount))
     }
 
-    private func cellView(_ text: AttributedString, column: Int) -> some View {
-        Text(text)
+    private func cellView(_ raw: AttributedString, column: Int, isHeader: Bool) -> some View {
+        let styled = isHeader
+            ? styledInline(raw, size: FontSize.tableHeader, weight: .semibold, baseColor: theme.textMuted, theme: theme)
+            : styledInline(raw, size: FontSize.tableCell, baseColor: theme.text, theme: theme)
+        return Text(styled)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: alignment(for: column))
             .padding(.horizontal, 12)
@@ -832,11 +543,17 @@ private struct MarkdownTableView: View {
 private struct CodeBlockView: View {
     let language: String
     let rawLines: [String]
-    let display: AttributedString
     let theme: Theme
 
     @State private var isHovering = false
     @State private var copied = false
+
+    private var display: AttributedString {
+        var s = AttributedString(rawLines.joined(separator: "\n"))
+        s.font = .system(size: FontSize.codeBlock, weight: .regular, design: .monospaced)
+        s.foregroundColor = theme.text
+        return s
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -903,8 +620,6 @@ struct ContentView: View {
     @AppStorage("liveReload") private var liveReload = true
     @Environment(\.colorScheme) private var systemScheme
 
-    @State private var renderedBlocks: [RenderedBlock] = []
-
     private let contentWidth: CGFloat = 860
 
     private var activeScheme: ColorScheme {
@@ -925,6 +640,9 @@ struct ContentView: View {
             Rectangle()
                 .fill(theme.border)
                 .frame(height: 1)
+            if let notice = model.notice {
+                noticeBar(notice)
+            }
             documentArea
         }
         .background(theme.bg)
@@ -932,11 +650,7 @@ struct ContentView: View {
         .preferredColorScheme(preferredScheme)
         .onAppear {
             model.setLiveReload(liveReload)
-            refreshRenderedMarkdown()
         }
-        .onChange(of: model.markdownSource) { _ in refreshRenderedMarkdown() }
-        .onChange(of: appTheme) { _ in refreshRenderedMarkdown() }
-        .onChange(of: systemScheme) { _ in refreshRenderedMarkdown() }
         .onChange(of: liveReload) { enabled in model.setLiveReload(enabled) }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil) { providers in
             guard let provider = providers.first else { return false }
@@ -949,6 +663,26 @@ struct ContentView: View {
             }
             return true
         }
+    }
+
+    private func noticeBar(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(text)
+                .font(.system(size: 12))
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button { model.notice = nil } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+        }
+        .foregroundStyle(theme.amber)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.amber.opacity(0.12))
     }
 
     private var preferredScheme: ColorScheme? {
@@ -1042,7 +776,7 @@ struct ContentView: View {
         } else {
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(renderedBlocks) { rendered in
+                    ForEach(model.blocks) { rendered in
                         blockView(rendered.block)
                             .padding(.bottom, bottomSpacing(rendered.block))
                     }
@@ -1076,21 +810,21 @@ struct ContentView: View {
     @ViewBuilder
     private func blockView(_ block: MarkdownBlock) -> some View {
         switch block {
-        case let .heading(level, text):
-            HeadingView(level: level, text: text, theme: theme)
-        case let .paragraph(text):
-            Text(text)
+        case let .heading(level, inline):
+            HeadingView(level: level, inline: inline, theme: theme)
+        case let .paragraph(inline):
+            Text(styledInline(inline, size: FontSize.body, baseColor: theme.text, theme: theme))
                 .lineSpacing(readingLineSpacing(for: FontSize.body))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         case let .list(rows):
             ListView(rows: rows, theme: theme)
-        case let .code(language, rawLines, display):
-            CodeBlockView(language: language, rawLines: rawLines, display: display, theme: theme)
+        case let .code(language, rawLines):
+            CodeBlockView(language: language, rawLines: rawLines, theme: theme)
         case let .table(header, rows, alignments):
             MarkdownTableView(header: header, rows: rows, alignments: alignments, theme: theme)
-        case let .callout(kind, title, content):
-            CalloutView(kind: kind, title: title, content: content, theme: theme)
+        case let .callout(kind, inline):
+            CalloutView(kind: kind, inline: inline, theme: theme)
         case .rule:
             Rectangle()
                 .fill(theme.border)
@@ -1109,10 +843,6 @@ struct ContentView: View {
         case .callout: return 16
         case .rule: return 0
         }
-    }
-
-    private func refreshRenderedMarkdown() {
-        renderedBlocks = MarkdownRenderer.render(markdown: model.markdownSource, theme: theme)
     }
 }
 
