@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Hardened Runtime entitlements for Developer ID (direct, non-sandboxed)
+	  distribution. The app needs no special capabilities: the file-open panel
+	  and drag-and-drop work without sandbox entitlements when not sandboxed.
+	  get-task-allow is disabled so the signed/notarized build cannot be
+	  attached to by a debugger — required for notarization.
+	-->
+	<key>com.apple.security.get-task-allow</key>
+	<false/>
+</dict>
+</plist>
