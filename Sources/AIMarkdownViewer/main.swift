@@ -149,10 +149,17 @@ final class ViewerModel: ObservableObject {
     /// Theme-independent parsed blocks. Colors/fonts are applied later in the
     /// views, so a theme switch never triggers a re-parse.
     @Published var blocks: [RenderedBlock] = []
+    /// Non-blocking banner message (large/truncated file, file removed, etc.).
+    @Published var notice: String?
 
     private var watcher: FileWatcher?
     private var liveReloadEnabled = true
     private var parseGeneration = 0
+
+    /// Hard cap on how much of a file we load, to keep memory bounded. Files
+    /// above this are truncated with a notice — protecting the "low resource"
+    /// promise against pathologically large inputs.
+    private static let maxBytes = 20_000_000
 
     /// Re-parse markdown into theme-independent blocks. Small documents parse
     /// synchronously (instant); large ones parse on a background task so the UI
@@ -176,14 +183,46 @@ final class ViewerModel: ObservableObject {
 
     func openFile(_ url: URL) {
         do {
-            markdownSource = try String(contentsOf: url, encoding: .utf8)
+            let (text, banner) = try loadContents(of: url)
+            notice = banner
+            markdownSource = text
             fileURL = url
             if liveReloadEnabled { startWatching(url) }
         } catch {
+            notice = nil
             markdownSource = "Could not open \(url.lastPathComponent).\n\n\(error.localizedDescription)"
             fileURL = nil
             watcher = nil
         }
+    }
+
+    /// Reads a file with a size guard and an encoding fallback chain. Returns the
+    /// text plus an optional banner (e.g. when the file was truncated).
+    private func loadContents(of url: URL) throws -> (String, String?) {
+        let size = (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        if size > Self.maxBytes {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            let data = handle.readData(ofLength: Self.maxBytes)
+            let mb = size / 1_000_000
+            return (decodeText(data),
+                    "Large file (\(mb) MB) — showing the first \(Self.maxBytes / 1_000_000) MB for performance.")
+        }
+        return (decodeText(try Data(contentsOf: url)), nil)
+    }
+
+    /// Decodes bytes as UTF-8, then (only if a UTF-16 BOM is present) UTF-16,
+    /// then the common single-byte encodings. UTF-16 is gated on a BOM because
+    /// it "succeeds" on arbitrary byte pairs and would otherwise yield mojibake.
+    private func decodeText(_ data: Data) -> String {
+        if let s = String(data: data, encoding: .utf8) { return s }
+        if data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF]),
+           let s = String(data: data, encoding: .utf16) {
+            return s
+        }
+        if let s = String(data: data, encoding: .windowsCP1252) { return s }
+        if let s = String(data: data, encoding: .isoLatin1) { return s }
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// Turns live reload on or off, tearing down or rebuilding the watcher for
@@ -206,11 +245,20 @@ final class ViewerModel: ObservableObject {
     }
 
     /// Re-reads the open file after a live change; no-op if the content matches.
+    /// Surfaces a banner (instead of silently showing stale content) when the
+    /// file has been deleted or can no longer be read.
     func reloadFromDisk() {
         guard let url = fileURL else { return }
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
-        if text != markdownSource {
-            markdownSource = text
+        if !FileManager.default.fileExists(atPath: url.path) {
+            notice = "\(url.lastPathComponent) is no longer available on disk."
+            return
+        }
+        do {
+            let (text, banner) = try loadContents(of: url)
+            notice = banner
+            if text != markdownSource { markdownSource = text }
+        } catch {
+            notice = "Can’t read \(url.lastPathComponent) — it may have moved or its permissions changed."
         }
     }
 
@@ -941,6 +989,9 @@ struct ContentView: View {
             Rectangle()
                 .fill(theme.border)
                 .frame(height: 1)
+            if let notice = model.notice {
+                noticeBar(notice)
+            }
             documentArea
         }
         .background(theme.bg)
@@ -961,6 +1012,26 @@ struct ContentView: View {
             }
             return true
         }
+    }
+
+    private func noticeBar(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(text)
+                .font(.system(size: 12))
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button { model.notice = nil } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss")
+        }
+        .foregroundStyle(theme.amber)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.amber.opacity(0.12))
     }
 
     private var preferredScheme: ColorScheme? {
