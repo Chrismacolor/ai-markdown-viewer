@@ -19,3 +19,6 @@ Package.resolved
 # Editors
 .vscode/
 .idea/
+
+# Local release notes (kept private; contains process, not secrets)
+RELEASE.md
