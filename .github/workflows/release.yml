@@ -15,6 +15,10 @@ on:
   push:
     tags: ['v*']
 
+# Needed so the workflow's GITHUB_TOKEN can create the GitHub Release.
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: macos-14
