@@ -580,8 +580,7 @@ private struct CodeBlockView: View {
         .overlay(alignment: .topTrailing) {
             if isHovering {
                 Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(rawLines.joined(separator: "\n"), forType: .string)
+                    setPasteboard(rawLines.joined(separator: "\n"))
                     withAnimation { copied = true }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                         withAnimation { copied = false }
@@ -612,6 +611,89 @@ private struct CodeBlockView: View {
     }
 }
 
+// MARK: - Copy support
+
+/// Replace the general pasteboard with `string`.
+private func setPasteboard(_ string: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(string, forType: .string)
+}
+
+/// Clean, plain-text rendering of a single block (markup markers stripped).
+/// Used by the per-block hover copy button.
+private func plainText(of block: MarkdownBlock) -> String {
+    switch block {
+    case let .heading(_, inline):
+        return String(inline.characters)
+    case let .paragraph(inline):
+        return String(inline.characters)
+    case let .callout(_, inline):
+        return String(inline.characters)
+    case let .list(items):
+        return items.map { item in
+            String(repeating: "    ", count: max(0, item.indent))
+                + item.marker + " " + String(item.inline.characters)
+        }.joined(separator: "\n")
+    case let .code(_, rawLines):
+        return rawLines.joined(separator: "\n")
+    case let .table(header, rows, _):
+        let lines = [header] + rows
+        return lines.map { row in
+            row.map { String($0.characters) }.joined(separator: "\t")
+        }.joined(separator: "\n")
+    case .rule:
+        return ""
+    }
+}
+
+/// A small "Copy" chip that fades in at the top-trailing corner on hover,
+/// mirroring the affordance built into `CodeBlockView`.
+private struct HoverCopyButton: ViewModifier {
+    let text: String
+    let theme: Theme
+
+    @State private var isHovering = false
+    @State private var copied = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .topTrailing) {
+                if isHovering && !text.isEmpty {
+                    Button {
+                        setPasteboard(text)
+                        withAnimation { copied = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            withAnimation { copied = false }
+                        }
+                    } label: {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 11))
+                            .foregroundStyle(copied ? theme.green : theme.textMuted)
+                            .padding(5)
+                            .background(theme.bg.opacity(0.7), in: RoundedRectangle(cornerRadius: 6))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(copied ? theme.green : theme.border, lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity)
+                    .help(copied ? "Copied" : "Copy this block")
+                }
+            }
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.15)) { isHovering = hovering }
+            }
+    }
+}
+
+private extension View {
+    /// Adds a hover-to-copy chip carrying `text`.
+    func copyableOnHover(_ text: String, theme: Theme) -> some View {
+        modifier(HoverCopyButton(text: text, theme: theme))
+    }
+}
+
 // MARK: - Content
 
 struct ContentView: View {
@@ -619,6 +701,7 @@ struct ContentView: View {
     @AppStorage("appTheme") private var appTheme = "system"
     @AppStorage("liveReload") private var liveReload = true
     @Environment(\.colorScheme) private var systemScheme
+    @State private var docCopied = false
 
     private let contentWidth: CGFloat = 860
 
@@ -716,6 +799,9 @@ struct ContentView: View {
 
             Spacer()
 
+            if !model.markdownSource.isEmpty {
+                copyDocButton
+            }
             if model.fileURL != nil {
                 liveToggle
             }
@@ -724,6 +810,35 @@ struct ContentView: View {
         .padding(.horizontal, 16)
         .frame(height: 56)
         .background(theme.surface)
+    }
+
+    private var copyDocButton: some View {
+        Button {
+            copyDocument()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: docCopied ? "checkmark" : "doc.on.doc")
+                Text(docCopied ? "Copied" : "Copy")
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(docCopied ? theme.green : theme.textMuted)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(docCopied ? theme.green.opacity(0.5) : theme.border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Copy the whole document as Markdown (⇧⌘C)")
+    }
+
+    private func copyDocument() {
+        setPasteboard(model.markdownSource)
+        withAnimation { docCopied = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation { docCopied = false }
+        }
     }
 
     private var liveToggle: some View {
@@ -812,19 +927,25 @@ struct ContentView: View {
         switch block {
         case let .heading(level, inline):
             HeadingView(level: level, inline: inline, theme: theme)
+                .copyableOnHover(plainText(of: block), theme: theme)
         case let .paragraph(inline):
             Text(styledInline(inline, size: FontSize.body, baseColor: theme.text, theme: theme))
                 .lineSpacing(readingLineSpacing(for: FontSize.body))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .copyableOnHover(plainText(of: block), theme: theme)
         case let .list(rows):
             ListView(rows: rows, theme: theme)
+                .copyableOnHover(plainText(of: block), theme: theme)
         case let .code(language, rawLines):
             CodeBlockView(language: language, rawLines: rawLines, theme: theme)
         case let .table(header, rows, alignments):
             MarkdownTableView(header: header, rows: rows, alignments: alignments, theme: theme)
+                .copyableOnHover(plainText(of: block), theme: theme)
         case let .callout(kind, inline):
             CalloutView(kind: kind, inline: inline, theme: theme)
+                .copyableOnHover(plainText(of: block), theme: theme)
         case .rule:
             Rectangle()
                 .fill(theme.border)
@@ -864,6 +985,15 @@ struct MarginsApp: App {
                 .onOpenURL { url in
                     model.openFile(url)
                 }
+        }
+        .commands {
+            CommandGroup(after: .pasteboard) {
+                Button("Copy Document as Markdown") {
+                    setPasteboard(model.markdownSource)
+                }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .disabled(model.markdownSource.isEmpty)
+            }
         }
     }
 }
