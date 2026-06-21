@@ -6,6 +6,8 @@ All notable changes to Margins are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-06-21
+
 ### Added
 - VoiceOver accessibility: labels on the toolbar and Find controls, and
   headings exposed as headers so the document is navigable by the rotor.
@@ -41,7 +43,8 @@ All notable changes to Margins are documented here. The format is based on
   reload, light/dark themes, robust file handling, and a signed + notarized DMG
   plus a Homebrew cask.
 
-[Unreleased]: https://github.com/Chrismacolor/margins/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/Chrismacolor/margins/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/Chrismacolor/margins/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/Chrismacolor/margins/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/Chrismacolor/margins/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/Chrismacolor/margins/releases/tag/v1.0.0
