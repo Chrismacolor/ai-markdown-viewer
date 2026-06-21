@@ -19,7 +19,7 @@ cask "margins" do
   desc "Native Markdown reader for macOS"
   homepage "https://github.com/Chrismacolor/margins"
 
-  depends_on macos: ">= :ventura"
+  depends_on macos: :ventura
 
   app "Margins.app"
 
