@@ -1,10 +1,16 @@
-# Margins
+<p align="center">
+  <img src="docs/icon.png" alt="Margins app icon" width="120" height="120">
+</p>
 
-[![Latest release](https://img.shields.io/github/v/release/Chrismacolor/margins?sort=semver)](https://github.com/Chrismacolor/margins/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/Chrismacolor/margins/total)](https://github.com/Chrismacolor/margins/releases)
-[![License: MIT](https://img.shields.io/github/license/Chrismacolor/margins)](LICENSE)
-![macOS 13+](https://img.shields.io/badge/macOS-13+-blue)
-![Apple Silicon](https://img.shields.io/badge/arch-Apple%20Silicon-blue)
+<h1 align="center">Margins</h1>
+
+<p align="center">
+  <a href="https://github.com/Chrismacolor/margins/releases/latest"><img src="https://img.shields.io/github/v/release/Chrismacolor/margins?sort=semver" alt="Latest release"></a>
+  <a href="https://github.com/Chrismacolor/margins/releases"><img src="https://img.shields.io/github/downloads/Chrismacolor/margins/total" alt="Downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Chrismacolor/margins" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/macOS-13+-blue" alt="macOS 13+">
+  <img src="https://img.shields.io/badge/arch-Apple%20Silicon-blue" alt="Apple Silicon">
+</p>
 
 A native Markdown reader for macOS. It opens `.md` files instantly, renders them
 with clean typography, and does nothing else. No web view, no bundled
