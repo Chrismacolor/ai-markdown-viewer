@@ -16,9 +16,9 @@ A native Markdown reader for macOS. It opens `.md` files instantly, renders them
 with clean typography, and does nothing else. No web view, no bundled
 JavaScript, no plugins, no setup.
 
-<!-- Screenshot: save a window capture to docs/screenshot.png, then uncomment the
-     line below. See docs/README.md for capture guidance. -->
-<!-- ![Margins rendering a Markdown document](docs/screenshot.png) -->
+<p align="center">
+  <img src="docs/screenshot.png" alt="Margins rendering a Markdown document" width="720">
+</p>
 
 - **100% native** — SwiftUI/AppKit rendering. No embedded browser, no Chromium,
   no WebKit. Markdown is parsed and drawn natively.
