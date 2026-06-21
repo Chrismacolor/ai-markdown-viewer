@@ -835,6 +835,7 @@ struct ContentView: View {
     @AppStorage("liveReload") private var liveReload = true
     @Environment(\.colorScheme) private var systemScheme
     @State private var docCopied = false
+    @State private var findDebounce: Task<Void, Never>?
     @FocusState private var findFieldFocused: Bool
 
     private let contentWidth: CGFloat = 860
@@ -869,12 +870,14 @@ struct ContentView: View {
             model.setLiveReload(liveReload)
         }
         .onChange(of: liveReload) { enabled in model.setLiveReload(enabled) }
-        .onChange(of: find.query) { _ in recomputeMatches() }
-        .onChange(of: model.markdownSource) { _ in recomputeMatches() }
+        .onChange(of: find.query) { _ in scheduleRecompute() }
+        .onChange(of: model.markdownSource) { _ in scheduleRecompute() }
         .onChange(of: find.isActive) { active in
             if active {
                 findFieldFocused = true
                 recomputeMatches()
+            } else {
+                findDebounce?.cancel()
             }
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil) { providers in
@@ -1071,6 +1074,21 @@ struct ContentView: View {
         guard let match = find.current else { return }
         withAnimation(.easeInOut(duration: 0.2)) {
             proxy.scrollTo(match.blockID, anchor: .center)
+        }
+    }
+
+    // Small documents recompute instantly for snappy highlighting; large ones
+    // debounce so typing in Find doesn't trigger a full re-scan per keystroke.
+    private func scheduleRecompute() {
+        findDebounce?.cancel()
+        if model.blocks.count < 2000 {
+            recomputeMatches()
+            return
+        }
+        findDebounce = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
+            recomputeMatches()
         }
     }
 
