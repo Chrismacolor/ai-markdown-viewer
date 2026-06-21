@@ -45,23 +45,39 @@ update, download a newer `.dmg` and repeat.
 
 ## Open Markdown
 
-- Right-click a `.md` file in Finder → **Open With → Margins**
-  (or **Get Info → Open with → Change All…** to make it the default).
-- Or drag a file onto the window.
+Open a file any of these ways:
+
+1. In Margins, click **Open** in the toolbar and choose a file.
+2. In Finder, right-click a `.md` file → **Open With → Margins**.
+3. Drag a `.md` file onto the Margins window.
 
 Supported extensions: `.md`, `.markdown`, `.mdown`.
 
+### Make Margins the default for Markdown
+
+1. In Finder, right-click any `.md` file → **Get Info**.
+2. Under **Open with**, choose **Margins**.
+3. Click **Change All…** to apply it to every `.md` file.
+
 ## Build from source
 
-Requirements: macOS 13+ and the Xcode command line tools
-(`xcode-select --install`).
+**Prerequisites:** macOS 13+ and the Xcode command line tools — install them with
+`xcode-select --install`.
 
-```bash
-./scripts/build_app.sh      # build/Margins.app (optimized, Apple Silicon)
-./scripts/install_app.sh    # build + copy to /Applications (uses sudo)
-./scripts/test.sh           # run parser tests + parse benchmark
-./scripts/release.sh        # sign + notarize + package a DMG (needs Developer ID)
-```
+1. Clone this repo and `cd` into it.
+2. Build the app:
+   ```bash
+   ./scripts/build_app.sh      # → build/Margins.app (optimized, Apple Silicon)
+   ```
+3. *(Optional)* Install it to `/Applications`:
+   ```bash
+   ./scripts/install_app.sh    # builds, then copies to /Applications (uses sudo)
+   ```
+
+Other scripts:
+
+- `./scripts/test.sh` — run the parser tests + parse benchmark.
+- `./scripts/release.sh` — sign + notarize + package a DMG (needs a Developer ID).
 
 `build_app.sh` honors `SWIFT_OPT=-Onone` for faster debug builds and stamps the
 version from the latest git tag.
