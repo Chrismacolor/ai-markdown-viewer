@@ -391,10 +391,12 @@ private struct HeadingView: View {
     let level: Int
     let inline: AttributedString
     let theme: Theme
+    var segmentID: String = ""
+    var find: FindHighlight = .inactive(.dark)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(styled)
+            Text(withFindHighlights(styled, segmentID: segmentID, find: find))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             if level == 1 {
@@ -426,16 +428,20 @@ private struct HeadingView: View {
 private struct ListView: View {
     let rows: [ListItem]
     let theme: Theme
+    var blockID: Int = 0
+    var find: FindHighlight = .inactive(.dark)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            ForEach(rows) { row in
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(row.marker)
                         .font(.system(size: FontSize.body))
                         .foregroundStyle(theme.textMuted)
                         .frame(minWidth: 14, alignment: .trailing)
-                    Text(styledInline(row.inline, size: FontSize.body, baseColor: theme.text, theme: theme))
+                    Text(withFindHighlights(
+                        styledInline(row.inline, size: FontSize.body, baseColor: theme.text, theme: theme),
+                        segmentID: "\(blockID)#L\(index)", find: find))
                         .lineSpacing(readingLineSpacing(for: FontSize.body))
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
@@ -450,6 +456,8 @@ private struct CalloutView: View {
     let kind: CalloutKind
     let inline: AttributedString
     let theme: Theme
+    var segmentID: String = ""
+    var find: FindHighlight = .inactive(.dark)
 
     var body: some View {
         HStack(spacing: 0) {
@@ -462,7 +470,9 @@ private struct CalloutView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(kind.color(theme))
                 }
-                Text(styledInline(inline, size: FontSize.body, baseColor: theme.text, theme: theme))
+                Text(withFindHighlights(
+                    styledInline(inline, size: FontSize.body, baseColor: theme.text, theme: theme),
+                    segmentID: segmentID, find: find))
                     .lineSpacing(readingLineSpacing(for: FontSize.body))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -481,6 +491,8 @@ private struct MarkdownTableView: View {
     let rows: [[AttributedString]]
     let alignments: [HAlign]
     let theme: Theme
+    var blockID: Int = 0
+    var find: FindHighlight = .inactive(.dark)
 
     private var columnCount: Int { header.count }
 
@@ -488,7 +500,7 @@ private struct MarkdownTableView: View {
         Grid(horizontalSpacing: 0, verticalSpacing: 0) {
             GridRow {
                 ForEach(Array(header.enumerated()), id: \.offset) { index, cell in
-                    cellView(cell, column: index, isHeader: true)
+                    cellView(cell, column: index, isHeader: true, segmentID: "\(blockID)#H\(index)")
                         .background(theme.card)
                 }
             }
@@ -497,7 +509,8 @@ private struct MarkdownTableView: View {
                 GridRow {
                     ForEach(0..<columnCount, id: \.self) { column in
                         cellView(column < row.count ? row[column] : AttributedString(""),
-                                 column: column, isHeader: false)
+                                 column: column, isHeader: false,
+                                 segmentID: "\(blockID)#R\(rowIndex)C\(column)")
                     }
                 }
                 if rowIndex < rows.count - 1 {
@@ -519,11 +532,11 @@ private struct MarkdownTableView: View {
             .gridCellColumns(max(1, columnCount))
     }
 
-    private func cellView(_ raw: AttributedString, column: Int, isHeader: Bool) -> some View {
+    private func cellView(_ raw: AttributedString, column: Int, isHeader: Bool, segmentID: String) -> some View {
         let styled = isHeader
             ? styledInline(raw, size: FontSize.tableHeader, weight: .semibold, baseColor: theme.textMuted, theme: theme)
             : styledInline(raw, size: FontSize.tableCell, baseColor: theme.text, theme: theme)
-        return Text(styled)
+        return Text(withFindHighlights(styled, segmentID: segmentID, find: find))
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: alignment(for: column))
             .padding(.horizontal, 12)
@@ -544,6 +557,8 @@ private struct CodeBlockView: View {
     let language: String
     let rawLines: [String]
     let theme: Theme
+    var segmentID: String = ""
+    var find: FindHighlight = .inactive(.dark)
 
     @State private var isHovering = false
     @State private var copied = false
@@ -563,7 +578,7 @@ private struct CodeBlockView: View {
                     .foregroundStyle(theme.textMuted)
             }
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(display)
+                Text(withFindHighlights(display, segmentID: segmentID, find: find))
                     .lineSpacing(readingLineSpacing(for: FontSize.codeBlock))
                     .textSelection(.enabled)
                     .padding(.trailing, 8)
@@ -694,14 +709,130 @@ private extension View {
     }
 }
 
+// MARK: - Find
+
+/// One occurrence of the search query within the document.
+struct FindMatch: Equatable {
+    let blockID: Int       // RenderedBlock.id — the scroll target
+    let segmentID: String  // identifies the specific leaf Text holding the match
+    let start: Int         // character offset of the match within that segment
+}
+
+/// The bits a leaf view needs to highlight its own text. Value-typed so it
+/// flows through the existing per-block views alongside `theme`.
+struct FindHighlight {
+    let query: String
+    let currentSegmentID: String
+    let currentStart: Int
+    let theme: Theme
+
+    static func inactive(_ theme: Theme) -> FindHighlight {
+        FindHighlight(query: "", currentSegmentID: "", currentStart: -1, theme: theme)
+    }
+}
+
+/// Search state for the active window. App-scoped (like `ViewerModel`) so the
+/// Find menu commands can reach it.
+final class FindModel: ObservableObject {
+    @Published var isActive = false
+    @Published var query = ""
+    @Published private(set) var matches: [FindMatch] = []
+    @Published var currentIndex = 0
+
+    var current: FindMatch? {
+        matches.indices.contains(currentIndex) ? matches[currentIndex] : nil
+    }
+
+    func setMatches(_ m: [FindMatch]) {
+        matches = m
+        currentIndex = 0
+    }
+
+    func next() {
+        guard !matches.isEmpty else { return }
+        currentIndex = (currentIndex + 1) % matches.count
+    }
+
+    func previous() {
+        guard !matches.isEmpty else { return }
+        currentIndex = (currentIndex - 1 + matches.count) % matches.count
+    }
+
+    func close() {
+        isActive = false
+        query = ""
+        matches = []
+        currentIndex = 0
+    }
+
+    func highlight(theme: Theme) -> FindHighlight {
+        guard isActive else { return .inactive(theme) }
+        return FindHighlight(
+            query: query,
+            currentSegmentID: current?.segmentID ?? "",
+            currentStart: current?.start ?? -1,
+            theme: theme
+        )
+    }
+}
+
+/// Append a `FindMatch` for every case-insensitive occurrence of `query` in `text`.
+private func collectMatches(
+    into result: inout [FindMatch],
+    blockID: Int,
+    segmentID: String,
+    text: String,
+    query: String
+) {
+    guard !query.isEmpty, !text.isEmpty else { return }
+    var searchRange = text.startIndex..<text.endIndex
+    while let r = text.range(of: query, options: .caseInsensitive, range: searchRange) {
+        let start = text.distance(from: text.startIndex, to: r.lowerBound)
+        result.append(FindMatch(blockID: blockID, segmentID: segmentID, start: start))
+        searchRange = r.upperBound..<text.endIndex
+    }
+}
+
+/// Paint match backgrounds onto an already-styled string. The current match is
+/// drawn solid with inverted text; the rest get a translucent amber wash.
+private func withFindHighlights(
+    _ styled: AttributedString,
+    segmentID: String,
+    find: FindHighlight
+) -> AttributedString {
+    guard !find.query.isEmpty else { return styled }
+    let plain = String(styled.characters)
+    guard !plain.isEmpty else { return styled }
+
+    var result = styled
+    var searchRange = plain.startIndex..<plain.endIndex
+    while let r = plain.range(of: find.query, options: .caseInsensitive, range: searchRange) {
+        let startOff = plain.distance(from: plain.startIndex, to: r.lowerBound)
+        let length = plain.distance(from: r.lowerBound, to: r.upperBound)
+        let lo = result.index(result.startIndex, offsetByCharacters: startOff)
+        let hi = result.index(lo, offsetByCharacters: length)
+        let isCurrent = segmentID == find.currentSegmentID && startOff == find.currentStart
+        if isCurrent {
+            result[lo..<hi].backgroundColor = find.theme.amber
+            result[lo..<hi].foregroundColor = find.theme.bg
+        } else {
+            result[lo..<hi].backgroundColor = find.theme.amber.opacity(0.32)
+        }
+        searchRange = r.upperBound..<plain.endIndex
+    }
+    return result
+}
+
 // MARK: - Content
 
 struct ContentView: View {
     @ObservedObject var model: ViewerModel
+    @ObservedObject var find: FindModel
     @AppStorage("appTheme") private var appTheme = "system"
     @AppStorage("liveReload") private var liveReload = true
     @Environment(\.colorScheme) private var systemScheme
     @State private var docCopied = false
+    @FocusState private var findFieldFocused: Bool
 
     private let contentWidth: CGFloat = 860
 
@@ -735,6 +866,14 @@ struct ContentView: View {
             model.setLiveReload(liveReload)
         }
         .onChange(of: liveReload) { enabled in model.setLiveReload(enabled) }
+        .onChange(of: find.query) { _ in recomputeMatches() }
+        .onChange(of: model.markdownSource) { _ in recomputeMatches() }
+        .onChange(of: find.isActive) { active in
+            if active {
+                findFieldFocused = true
+                recomputeMatches()
+            }
+        }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil) { providers in
             guard let provider = providers.first else { return false }
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
@@ -828,6 +967,7 @@ struct ContentView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(docCopied ? theme.green.opacity(0.5) : theme.border, lineWidth: 1)
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("Copy the whole document as Markdown (⇧⌘C)")
@@ -857,6 +997,7 @@ struct ContentView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(liveReload ? theme.accent.opacity(0.5) : theme.border, lineWidth: 1)
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(liveReload ? "Live reload on — preview updates when the file changes" : "Live reload off — click to resume")
@@ -889,21 +1030,126 @@ struct ContentView: View {
         if model.fileURL == nil && model.markdownSource.isEmpty {
             emptyState
         } else {
-            ScrollView(.vertical) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(model.blocks) { rendered in
-                        blockView(rendered.block)
-                            .padding(.bottom, bottomSpacing(rendered.block))
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(model.blocks) { rendered in
+                            blockView(rendered)
+                                .padding(.bottom, bottomSpacing(rendered.block))
+                                .id(rendered.id)
+                        }
+                    }
+                    .frame(maxWidth: contentWidth, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.horizontal, 40)
+                    .padding(.vertical, 32)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(theme.bg)
+                .onChange(of: find.currentIndex) { _ in scrollToCurrentMatch(proxy) }
+                .onChange(of: find.matches) { _ in scrollToCurrentMatch(proxy) }
+            }
+            .overlay(alignment: .topTrailing) {
+                if find.isActive {
+                    findBar
+                        .padding(.top, 12)
+                        .padding(.trailing, 16)
+                }
+            }
+        }
+    }
+
+    private func scrollToCurrentMatch(_ proxy: ScrollViewProxy) {
+        guard let match = find.current else { return }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            proxy.scrollTo(match.blockID, anchor: .center)
+        }
+    }
+
+    private func recomputeMatches() {
+        guard find.isActive, !find.query.isEmpty else {
+            find.setMatches([])
+            return
+        }
+        var result: [FindMatch] = []
+        for rendered in model.blocks {
+            let id = rendered.id
+            switch rendered.block {
+            case let .heading(_, inline):
+                collectMatches(into: &result, blockID: id, segmentID: "\(id)", text: String(inline.characters), query: find.query)
+            case let .paragraph(inline):
+                collectMatches(into: &result, blockID: id, segmentID: "\(id)", text: String(inline.characters), query: find.query)
+            case let .callout(_, inline):
+                collectMatches(into: &result, blockID: id, segmentID: "\(id)", text: String(inline.characters), query: find.query)
+            case let .code(_, rawLines):
+                collectMatches(into: &result, blockID: id, segmentID: "\(id)", text: rawLines.joined(separator: "\n"), query: find.query)
+            case let .list(items):
+                for (i, item) in items.enumerated() {
+                    collectMatches(into: &result, blockID: id, segmentID: "\(id)#L\(i)", text: String(item.inline.characters), query: find.query)
+                }
+            case let .table(header, rows, _):
+                for (c, cell) in header.enumerated() {
+                    collectMatches(into: &result, blockID: id, segmentID: "\(id)#H\(c)", text: String(cell.characters), query: find.query)
+                }
+                for (r, row) in rows.enumerated() {
+                    for (c, cell) in row.enumerated() {
+                        collectMatches(into: &result, blockID: id, segmentID: "\(id)#R\(r)C\(c)", text: String(cell.characters), query: find.query)
                     }
                 }
-                .frame(maxWidth: contentWidth, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.horizontal, 40)
-                .padding(.vertical, 32)
+            case .rule:
+                break
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(theme.bg)
         }
+        find.setMatches(result)
+    }
+
+    private var findBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(theme.textMuted)
+            TextField("Find", text: $find.query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .frame(width: 180)
+                .focused($findFieldFocused)
+                .onSubmit { find.next() }
+            if !find.query.isEmpty {
+                Text(find.matches.isEmpty ? "Not found" : "\(find.currentIndex + 1) of \(find.matches.count)")
+                    .font(.system(size: 11))
+                    .monospacedDigit()
+                    .foregroundStyle(theme.textMuted)
+            }
+            Divider().frame(height: 16)
+            Button { find.previous() } label: { Image(systemName: "chevron.up") }
+                .buttonStyle(.plain)
+                .disabled(find.matches.isEmpty)
+                .help("Previous match (⇧⌘G)")
+            Button { find.next() } label: { Image(systemName: "chevron.down") }
+                .buttonStyle(.plain)
+                .disabled(find.matches.isEmpty)
+                .help("Next match (⌘G)")
+            Button { closeFind() } label: { Image(systemName: "xmark") }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .help("Close (Esc)")
+        }
+        .font(.system(size: 12))
+        .foregroundStyle(theme.text)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(theme.surface, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(theme.border, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
+        .onExitCommand { closeFind() }
+    }
+
+    private func closeFind() {
+        find.close()
+        findFieldFocused = false
     }
 
     private var emptyState: some View {
@@ -923,28 +1169,33 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func blockView(_ block: MarkdownBlock) -> some View {
+    private func blockView(_ rendered: RenderedBlock) -> some View {
+        let block = rendered.block
+        let id = rendered.id
+        let hl = find.highlight(theme: theme)
         switch block {
         case let .heading(level, inline):
-            HeadingView(level: level, inline: inline, theme: theme)
+            HeadingView(level: level, inline: inline, theme: theme, segmentID: "\(id)", find: hl)
                 .copyableOnHover(plainText(of: block), theme: theme)
         case let .paragraph(inline):
-            Text(styledInline(inline, size: FontSize.body, baseColor: theme.text, theme: theme))
+            Text(withFindHighlights(
+                styledInline(inline, size: FontSize.body, baseColor: theme.text, theme: theme),
+                segmentID: "\(id)", find: hl))
                 .lineSpacing(readingLineSpacing(for: FontSize.body))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .copyableOnHover(plainText(of: block), theme: theme)
         case let .list(rows):
-            ListView(rows: rows, theme: theme)
+            ListView(rows: rows, theme: theme, blockID: id, find: hl)
                 .copyableOnHover(plainText(of: block), theme: theme)
         case let .code(language, rawLines):
-            CodeBlockView(language: language, rawLines: rawLines, theme: theme)
+            CodeBlockView(language: language, rawLines: rawLines, theme: theme, segmentID: "\(id)", find: hl)
         case let .table(header, rows, alignments):
-            MarkdownTableView(header: header, rows: rows, alignments: alignments, theme: theme)
+            MarkdownTableView(header: header, rows: rows, alignments: alignments, theme: theme, blockID: id, find: hl)
                 .copyableOnHover(plainText(of: block), theme: theme)
         case let .callout(kind, inline):
-            CalloutView(kind: kind, inline: inline, theme: theme)
+            CalloutView(kind: kind, inline: inline, theme: theme, segmentID: "\(id)", find: hl)
                 .copyableOnHover(plainText(of: block), theme: theme)
         case .rule:
             Rectangle()
@@ -971,10 +1222,11 @@ struct ContentView: View {
 struct MarginsApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = ViewerModel()
+    @StateObject private var find = FindModel()
 
     var body: some Scene {
         WindowGroup {
-            ContentView(model: model)
+            ContentView(model: model, find: find)
                 .onAppear {
                     appDelegate.onOpenFiles = { urls in
                         if let firstURL = urls.first {
@@ -993,6 +1245,17 @@ struct MarginsApp: App {
                 }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .disabled(model.markdownSource.isEmpty)
+            }
+            CommandGroup(after: .textEditing) {
+                Button("Find…") { find.isActive = true }
+                    .keyboardShortcut("f")
+                    .disabled(model.markdownSource.isEmpty)
+                Button("Find Next") { find.next() }
+                    .keyboardShortcut("g")
+                    .disabled(find.matches.isEmpty)
+                Button("Find Previous") { find.previous() }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                    .disabled(find.matches.isEmpty)
             }
         }
     }
