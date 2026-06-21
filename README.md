@@ -1,8 +1,18 @@
 # Margins
 
+[![Latest release](https://img.shields.io/github/v/release/Chrismacolor/margins?sort=semver)](https://github.com/Chrismacolor/margins/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Chrismacolor/margins/total)](https://github.com/Chrismacolor/margins/releases)
+[![License: MIT](https://img.shields.io/github/license/Chrismacolor/margins)](LICENSE)
+![macOS 13+](https://img.shields.io/badge/macOS-13+-blue)
+![Apple Silicon](https://img.shields.io/badge/arch-Apple%20Silicon-blue)
+
 A native Markdown reader for macOS. It opens `.md` files instantly, renders them
 with clean typography, and does nothing else. No web view, no bundled
 JavaScript, no plugins, no setup.
+
+<!-- Screenshot: save a window capture to docs/screenshot.png, then uncomment the
+     line below. See docs/README.md for capture guidance. -->
+<!-- ![Margins rendering a Markdown document](docs/screenshot.png) -->
 
 - **100% native** — SwiftUI/AppKit rendering. No embedded browser, no Chromium,
   no WebKit. Markdown is parsed and drawn natively.
