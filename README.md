@@ -17,19 +17,31 @@ to read Markdown, cleanly and natively.
 
 ## Install
 
-### Homebrew (recommended)
+> **Requires:** macOS 13 (Ventura) or later, on Apple Silicon.
 
-```bash
-brew install --cask Chrismacolor/tap/margins
-```
+Pick one of the two options below.
 
-Update with `brew upgrade`.
+### Option A — Homebrew (recommended)
 
-### Direct download
+1. If you don't already have [Homebrew](https://brew.sh), install it first.
+2. Install Margins:
+   ```bash
+   brew install --cask Chrismacolor/tap/margins
+   ```
+3. Launch **Margins** from Spotlight or `/Applications`.
 
-Grab the signed, notarized `.dmg` from the
-[Releases](https://github.com/Chrismacolor/margins/releases) page and
-drag **Margins** to `/Applications`.
+To update later: `brew upgrade`.
+
+### Option B — Direct download
+
+1. Download the latest `Margins-x.y.z.dmg` from the
+   [Releases](https://github.com/Chrismacolor/margins/releases) page.
+2. Double-click the `.dmg` to open it.
+3. Drag **Margins** into the **Applications** folder.
+4. Eject the disk image, then launch **Margins** from `/Applications`.
+
+The app is signed and notarized, so it opens without Gatekeeper warnings. To
+update, download a newer `.dmg` and repeat.
 
 ## Open Markdown
 
