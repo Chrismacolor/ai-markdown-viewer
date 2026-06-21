@@ -12,7 +12,7 @@
 
 cask "margins" do
   version "1.0.0"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  sha256 "30e59763b448ba584d665ec7cb838223f097b549c4c79ff0eea7c7f30ac52d33"
 
   url "https://github.com/Chrismacolor/margins/releases/download/v#{version}/Margins-#{version}.dmg"
   name "Margins"
