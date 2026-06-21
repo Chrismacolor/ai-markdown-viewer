@@ -91,6 +91,12 @@ rm -f "$DMG_PATH"
 hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG_PATH" >/dev/null
 rm -rf "$STAGE"
 
+# Sign the disk image itself so Gatekeeper has a usable signature on the
+# downloaded artifact (the app inside is already signed). Without this, spctl
+# reports "no usable signature" for the .dmg even after notarization.
+echo "==> Signing DMG"
+codesign --force --timestamp --sign "$DEVELOPER_ID" "$DMG_PATH"
+
 if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
   # --- 5. Notarize + staple the DMG itself ---
   echo "==> Notarizing DMG"
@@ -98,7 +104,9 @@ if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
   xcrun stapler staple "$DMG_PATH"
   echo "==> Validating"
   xcrun stapler validate "$DMG_PATH"
-  spctl -a -vvv --type install "$DMG_PATH" || true
+  # A .dmg is assessed under the "open" rule (the operation when a user
+  # double-clicks it), not "install" (which is for .pkg installers).
+  spctl -a -vvv --type open --context context:primary-signature "$DMG_PATH" || true
 fi
 
 SHA="$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
