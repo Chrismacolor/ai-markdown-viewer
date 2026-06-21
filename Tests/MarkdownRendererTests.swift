@@ -41,6 +41,8 @@ struct TestRunner {
         testHorizontalRule()
         testParagraphTableBoundary()
         testEmpty()
+        testFindMatches()
+        testPlainText()
         benchmark()
 
         if failures > 0 {
@@ -139,6 +141,59 @@ struct TestRunner {
         print("Empty input")
         check(MarkdownRenderer.parse("").isEmpty, "no blocks for empty string")
         check(MarkdownRenderer.parse("\n\n   \n").isEmpty, "no blocks for whitespace only")
+    }
+
+    static func testFindMatches() {
+        print("Find — collectMatches")
+        var r: [FindMatch] = []
+        // Two case-insensitive, non-overlapping occurrences with correct offsets.
+        collectMatches(into: &r, blockID: 3, segmentID: "3", text: "The cat and the CAT.", query: "cat")
+        check(r.count == 2, "two case-insensitive matches")
+        check(r.first?.blockID == 3 && r.first?.segmentID == "3", "match carries block/segment id")
+        check(r.map(\.start) == [4, 16], "match start offsets")
+
+        // Empty query / empty text / no match → nothing appended.
+        var empty: [FindMatch] = []
+        collectMatches(into: &empty, blockID: 0, segmentID: "0", text: "hello", query: "")
+        collectMatches(into: &empty, blockID: 0, segmentID: "0", text: "", query: "x")
+        collectMatches(into: &empty, blockID: 0, segmentID: "0", text: "hello", query: "z")
+        check(empty.isEmpty, "no matches for empty/absent query")
+
+        // Adjacent matches don't overlap-double-count.
+        var adj: [FindMatch] = []
+        collectMatches(into: &adj, blockID: 1, segmentID: "1", text: "aaaa", query: "aa")
+        check(adj.map(\.start) == [0, 2], "adjacent matches step past the previous one")
+    }
+
+    static func testPlainText() {
+        print("Find — plainText(of:)")
+        let doc = """
+        # Title
+
+        A **bold** paragraph.
+
+        - one
+        - two
+
+        | A | B |
+        | --- | --- |
+        | 1 | 2 |
+        """
+        let blocks = MarkdownRenderer.parse(doc)
+        let heading = blocks.first { blockKind($0.block) == "heading" }!.block
+        check(plainText(of: heading) == "Title", "heading plain text strips markup")
+
+        let para = blocks.first { blockKind($0.block) == "paragraph" }!.block
+        check(plainText(of: para) == "A bold paragraph.", "paragraph drops emphasis markers")
+
+        let list = blocks.first { blockKind($0.block) == "list" }!.block
+        check(plainText(of: list).contains("one") && plainText(of: list).contains("two"),
+              "list plain text includes each item")
+
+        let table = blocks.first { blockKind($0.block) == "table" }!.block
+        check(plainText(of: table).contains("\t"), "table cells are tab-separated")
+        check(plainText(of: table).contains("1") && plainText(of: table).contains("2"),
+              "table plain text includes body cells")
     }
 
     static func benchmark() {
