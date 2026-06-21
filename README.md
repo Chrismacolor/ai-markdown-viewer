@@ -20,8 +20,7 @@ to read Markdown, cleanly and natively.
 ### Homebrew (recommended)
 
 ```bash
-brew tap Chrismacolor/tap
-brew install --cask margins
+brew install --cask Chrismacolor/tap/margins
 ```
 
 Update with `brew upgrade`.
