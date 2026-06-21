@@ -399,6 +399,7 @@ private struct HeadingView: View {
             Text(withFindHighlights(styled, segmentID: segmentID, find: find))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
             if level == 1 {
                 DashedRule(color: theme.border, lineWidth: 2)
             } else if level == 2 {
@@ -618,6 +619,7 @@ private struct CodeBlockView: View {
                 .buttonStyle(.plain)
                 .padding(8)
                 .transition(.opacity)
+                .accessibilityLabel("Copy code")
             }
         }
         .onHover { hovering in
@@ -694,6 +696,7 @@ private struct HoverCopyButton: ViewModifier {
                     .buttonStyle(.plain)
                     .transition(.opacity)
                     .help(copied ? "Copied" : "Copy this block")
+                    .accessibilityLabel("Copy this block")
                 }
             }
             .onHover { hovering in
@@ -899,6 +902,7 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .help("Dismiss")
+            .accessibilityLabel("Dismiss notice")
         }
         .foregroundStyle(theme.amber)
         .padding(.horizontal, 16)
@@ -971,6 +975,7 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .help("Copy the whole document as Markdown (⇧⌘C)")
+        .accessibilityLabel("Copy document as Markdown")
     }
 
     private func copyDocument() {
@@ -1001,6 +1006,8 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .help(liveReload ? "Live reload on — preview updates when the file changes" : "Live reload off — click to resume")
+        .accessibilityLabel("Live reload")
+        .accessibilityValue(liveReload ? "On" : "Off")
     }
 
     private var themeToggle: some View {
@@ -1015,6 +1022,7 @@ struct ContentView: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Theme")
+        .accessibilityLabel("Theme")
     }
 
     private var themeIcon: String {
@@ -1108,31 +1116,39 @@ struct ContentView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 12))
                 .foregroundStyle(theme.textMuted)
+                .accessibilityHidden(true)
             TextField("Find", text: $find.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .frame(width: 180)
                 .focused($findFieldFocused)
                 .onSubmit { find.next() }
+                .accessibilityLabel("Find in document")
             if !find.query.isEmpty {
                 Text(find.matches.isEmpty ? "Not found" : "\(find.currentIndex + 1) of \(find.matches.count)")
                     .font(.system(size: 11))
                     .monospacedDigit()
                     .foregroundStyle(theme.textMuted)
+                    .accessibilityLabel(find.matches.isEmpty
+                        ? "No matches"
+                        : "Match \(find.currentIndex + 1) of \(find.matches.count)")
             }
             Divider().frame(height: 16)
             Button { find.previous() } label: { Image(systemName: "chevron.up") }
                 .buttonStyle(.plain)
                 .disabled(find.matches.isEmpty)
                 .help("Previous match (⇧⌘G)")
+                .accessibilityLabel("Previous match")
             Button { find.next() } label: { Image(systemName: "chevron.down") }
                 .buttonStyle(.plain)
                 .disabled(find.matches.isEmpty)
                 .help("Next match (⌘G)")
+                .accessibilityLabel("Next match")
             Button { closeFind() } label: { Image(systemName: "xmark") }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.cancelAction)
                 .help("Close (Esc)")
+                .accessibilityLabel("Close find")
         }
         .font(.system(size: 12))
         .foregroundStyle(theme.text)
