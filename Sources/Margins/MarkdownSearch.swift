@@ -31,6 +31,8 @@ func collectMatches(
 /// Used by the per-block hover copy button.
 func plainText(of block: MarkdownBlock) -> String {
     switch block {
+    case let .frontmatter(fields):
+        return fields.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
     case let .heading(_, inline):
         return String(inline.characters)
     case let .paragraph(inline):

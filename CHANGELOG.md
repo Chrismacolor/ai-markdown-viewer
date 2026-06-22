@@ -6,6 +6,11 @@ All notable changes to Margins are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- YAML frontmatter: a leading `---` block is rendered as a metadata panel
+  (key/value pairs) instead of leaking in as a rule + paragraph. Simple
+  scalars, inline `[a, b]` lists, and `- item` block lists are recognized.
+
 ## [1.0.3] - 2026-06-21
 
 ### Added

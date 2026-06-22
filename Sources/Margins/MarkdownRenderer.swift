@@ -49,9 +49,17 @@ struct ListItem: Identifiable {
     let inline: AttributedString
 }
 
+/// A single `key: value` pair from a YAML frontmatter block (value flattened
+/// to a display string — lists are comma-joined; deeper YAML is not parsed).
+struct FrontmatterField: Equatable {
+    let key: String
+    let value: String
+}
+
 /// Theme-independent structural blocks. Inline `AttributedString`s carry
 /// presentation intents and links but NO colors/fonts — applied in the views.
 enum MarkdownBlock {
+    case frontmatter([FrontmatterField])
     case heading(level: Int, inline: AttributedString)
     case paragraph(inline: AttributedString)
     case list([ListItem])
@@ -75,6 +83,13 @@ struct MarkdownRenderer {
 
         var index = 0
         var blocks: [MarkdownBlock] = []
+
+        // A leading `---` line begins YAML frontmatter (only at the very top of
+        // the document, which disambiguates it from a horizontal rule).
+        if let (fields, next) = parseFrontmatter(from: lines) {
+            if !fields.isEmpty { blocks.append(.frontmatter(fields)) }
+            index = next
+        }
 
         while index < lines.count {
             while index < lines.count, lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
@@ -111,6 +126,87 @@ struct MarkdownRenderer {
         }
 
         return blocks.enumerated().map { RenderedBlock(id: $0.offset, block: $0.element) }
+    }
+
+    // MARK: Frontmatter
+
+    /// Parse a leading YAML frontmatter block (`---` … `---`/`...`) into flattened
+    /// key/value fields. Returns nil when the document doesn't open with one.
+    /// Only top-level scalars, inline `[a, b]` lists, and `- item` block lists
+    /// are recognized; deeper YAML is skipped (kept minimal, no YAML dependency).
+    private static func parseFrontmatter(from lines: [String]) -> (fields: [FrontmatterField], end: Int)? {
+        guard let first = lines.first, first.trimmingCharacters(in: .whitespaces) == "---" else {
+            return nil
+        }
+        var close = -1
+        var i = 1
+        while i < lines.count {
+            let t = lines[i].trimmingCharacters(in: .whitespaces)
+            if t == "---" || t == "..." { close = i; break }
+            i += 1
+        }
+        guard close != -1 else { return nil }  // no close → treat as a normal rule
+
+        var fields: [FrontmatterField] = []
+        var j = 1
+        while j < close {
+            let raw = lines[j]
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            // Only non-indented `key: value` lines are fields (skip nested maps).
+            if !raw.hasPrefix(" "), !raw.hasPrefix("\t"), let colon = line.firstIndex(of: ":") {
+                let key = String(line[..<colon]).trimmingCharacters(in: .whitespaces)
+                let rest = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+                if !key.isEmpty {
+                    if rest.isEmpty {
+                        // An empty value may be followed by a `- item` block list.
+                        var items: [String] = []
+                        var k = j + 1
+                        while k < close {
+                            let it = lines[k].trimmingCharacters(in: .whitespaces)
+                            if it.hasPrefix("- ") {
+                                items.append(cleanScalar(String(it.dropFirst(2))))
+                                k += 1
+                            } else if it.isEmpty {
+                                k += 1
+                            } else {
+                                break
+                            }
+                        }
+                        if !items.isEmpty {
+                            fields.append(FrontmatterField(key: key, value: items.joined(separator: ", ")))
+                            j = k
+                            continue
+                        }
+                        // empty value, no list (e.g. a nested-map parent) → skip
+                    } else {
+                        fields.append(FrontmatterField(key: key, value: cleanScalar(rest)))
+                    }
+                }
+            }
+            j += 1
+        }
+        return (fields, close + 1)
+    }
+
+    /// Strip surrounding quotes and flatten an inline `[a, b]` list to a string.
+    private static func cleanScalar(_ s: String) -> String {
+        var v = s.trimmingCharacters(in: .whitespaces)
+        v = unquoted(v)
+        if v.hasPrefix("["), v.hasSuffix("]") {
+            let inner = v.dropFirst().dropLast()
+            v = inner.split(separator: ",")
+                .map { unquoted($0.trimmingCharacters(in: .whitespaces)) }
+                .joined(separator: ", ")
+        }
+        return v
+    }
+
+    private static func unquoted(_ s: String) -> String {
+        if s.count >= 2,
+           (s.hasPrefix("\"") && s.hasSuffix("\"")) || (s.hasPrefix("'") && s.hasSuffix("'")) {
+            return String(s.dropFirst().dropLast())
+        }
+        return s
     }
 
     // MARK: Cached regexes (compiled once, not per line)

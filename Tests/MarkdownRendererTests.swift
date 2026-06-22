@@ -8,6 +8,7 @@ private func plain(_ a: AttributedString) -> String { String(a.characters) }
 
 private func blockKind(_ b: MarkdownBlock) -> String {
     switch b {
+    case .frontmatter: return "frontmatter"
     case .heading: return "heading"
     case .paragraph: return "paragraph"
     case .list: return "list"
@@ -43,6 +44,7 @@ struct TestRunner {
         testEmpty()
         testFindMatches()
         testPlainText()
+        testFrontmatter()
         benchmark()
 
         if failures > 0 {
@@ -194,6 +196,48 @@ struct TestRunner {
         check(plainText(of: table).contains("\t"), "table cells are tab-separated")
         check(plainText(of: table).contains("1") && plainText(of: table).contains("2"),
               "table plain text includes body cells")
+    }
+
+    static func testFrontmatter() {
+        print("Frontmatter")
+        let doc = """
+        ---
+        title: "My Note"
+        date: 2026-06-21
+        tags: [reading, ideas]
+        authors:
+          - Jane
+          - John
+        nested:
+          a: 1
+        ---
+        # Heading
+
+        Body.
+        """
+        let blocks = MarkdownRenderer.parse(doc)
+        guard case let .frontmatter(fields) = blocks.first?.block else {
+            check(false, "first block is frontmatter"); return
+        }
+        check(true, "first block is frontmatter")
+        let map = Dictionary(uniqueKeysWithValues: fields.map { ($0.key, $0.value) })
+        check(map["title"] == "My Note", "quotes stripped from scalar")
+        check(map["date"] == "2026-06-21", "plain scalar")
+        check(map["tags"] == "reading, ideas", "inline list flattened")
+        check(map["authors"] == "Jane, John", "block list flattened")
+        check(map["nested"] == nil, "nested map skipped (no YAML dependency)")
+        // The body still parses, and the closing --- is not a stray rule.
+        check(blocks.contains { blockKind($0.block) == "heading" }, "body heading parsed after frontmatter")
+        check(!blocks.contains { blockKind($0.block) == "rule" }, "delimiters did not become rules")
+
+        // A mid-document --- is still a horizontal rule, not frontmatter.
+        let hr = MarkdownRenderer.parse("Para\n\n---\n\nMore")
+        check(hr.contains { blockKind($0.block) == "rule" }, "mid-document --- stays a rule")
+        check(!hr.contains { blockKind($0.block) == "frontmatter" }, "no frontmatter when --- isn't first")
+
+        // No closing delimiter → leading --- is treated as a normal rule.
+        let unclosed = MarkdownRenderer.parse("---\ntitle: x\nstill going")
+        check(!unclosed.contains { blockKind($0.block) == "frontmatter" }, "unterminated block is not frontmatter")
     }
 
     static func benchmark() {

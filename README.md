@@ -26,6 +26,8 @@ JavaScript, no plugins, no setup.
 - **Private & offline** — your files never leave your machine; no analytics.
 - **Dark / light** — follows the macOS appearance, with a manual override.
 - **Live reload** — edits on disk update the view instantly (toggle in the header).
+- **Find** — `⌘F` searches the document with match highlighting and quick navigation.
+- **Frontmatter** — YAML metadata (`---` blocks) renders as a tidy properties panel.
 
 Margins is deliberately minimal. If you want Mermaid diagrams, LaTeX, PDF export,
 and a dozen themes, other viewers do that — Margins is for people who just want

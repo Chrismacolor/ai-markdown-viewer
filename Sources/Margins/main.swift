@@ -387,6 +387,45 @@ private struct DashedRule: View {
     }
 }
 
+private struct FrontmatterView: View {
+    let fields: [FrontmatterField]
+    let theme: Theme
+    var blockID: Int = 0
+    var find: FindHighlight = .inactive(.dark)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(fields.enumerated()), id: \.offset) { index, field in
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text(field.key.uppercased())
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(theme.textMuted)
+                        .frame(width: 92, alignment: .leading)
+                    Text(withFindHighlights(styledValue(field.value), segmentID: "\(blockID)#F\(index)", find: find))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.card)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(theme.border, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func styledValue(_ s: String) -> AttributedString {
+        var a = AttributedString(s)
+        a.font = .system(size: FontSize.body)
+        a.foregroundColor = theme.text
+        return a
+    }
+}
+
 private struct HeadingView: View {
     let level: Int
     let inline: AttributedString
@@ -1053,6 +1092,10 @@ struct ContentView: View {
         for rendered in model.blocks {
             let id = rendered.id
             switch rendered.block {
+            case let .frontmatter(fields):
+                for (i, field) in fields.enumerated() {
+                    collectMatches(into: &result, blockID: id, segmentID: "\(id)#F\(i)", text: field.value, query: find.query)
+                }
             case let .heading(_, inline):
                 collectMatches(into: &result, blockID: id, segmentID: "\(id)", text: String(inline.characters), query: find.query)
             case let .paragraph(inline):
@@ -1160,6 +1203,9 @@ struct ContentView: View {
         let id = rendered.id
         let hl = find.highlight(theme: theme)
         switch block {
+        case let .frontmatter(fields):
+            FrontmatterView(fields: fields, theme: theme, blockID: id, find: hl)
+                .copyableOnHover(plainText(of: block), theme: theme)
         case let .heading(level, inline):
             HeadingView(level: level, inline: inline, theme: theme, segmentID: "\(id)", find: hl)
                 .copyableOnHover(plainText(of: block), theme: theme)
@@ -1193,6 +1239,7 @@ struct ContentView: View {
 
     private func bottomSpacing(_ block: MarkdownBlock) -> CGFloat {
         switch block {
+        case .frontmatter: return 20
         case .heading(let level, _): return level <= 2 ? 10 : 8
         case .paragraph: return 14
         case .list: return 14
